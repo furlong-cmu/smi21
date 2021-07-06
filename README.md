@@ -1,4 +1,4 @@
-# smi21-project5
+# smi21
 
 standalone_dvs_conversion.py is a ROS script that will listen to camera messages in the NRP and translate them into events using the v2e event generator.
 
