@@ -23,11 +23,13 @@ from external_module_interface.external_module import ExternalModule
 
 class DVSSim(ExternalModule):
     
-    def __init__(self, module_name=None, steps=1):
+    def __init__(self, module_name=None, steps=1, module_id=123):
         super(DVSSim, self).__init__(module_name, steps)
 
+        self.module_id = module_id
+
         self.real_generator = False #rospy.get_param('real_generator')
-        self.publishing = False # rospy.get_param('publishing')
+        self.publishing = True # rospy.get_param('publishing')
         self.emulator = None
         if self.real_generator:
             self.emulator = EventEmulator(
@@ -45,7 +47,6 @@ class DVSSim(ExternalModule):
                                     self.camera_callback)
         if self.publishing:
             self.pub = rospy.Publisher('/smi21/dvs_event_array', EventArray, queue_size=1)
-            rospy.Timer(rospy.Duration(0.1), self.send_event)
         self.image = None
         self.num_channels = {'rgb8':3}
 
@@ -75,11 +76,15 @@ class DVSSim(ExternalModule):
         note the length of the events should 
         '''
         if not self.events is None:
-            self.module_data = self.events.flatten()
+            self.module_data = [self.module_id]
+            self.module_data.extend(self.to_event_frame(self.events).flatten())
+            if self.publishing:
+                msg = self.to_event_array(self.events)
+                self.pub.publish(msg)
+            ### end if
             self.events = None
-        else:
-            self.module_data = []
-
+        ### end if
+    ### end share_module_data
     
     # Callback functions
     def camera_callback(self, img_msg):
@@ -90,29 +95,29 @@ class DVSSim(ExternalModule):
         self.image = cv2.cvtColor(colour_img, cv2.COLOR_RGB2GRAY)
         self.time = img_msg.header.stamp.to_sec()
 
-    def send_event(self, timer_event):
+    # Helper functions
+    def to_event_frame(self, events):
+        '''
+        @param events an N x 4 numpy array with each row being 
+            (t, x, y, polarity)
+        '''
+        retval = np.zeros((self.image.shape[0], self.image.shape[1], 2))
+        for e in events:
+            # TODO: Confirm that x -> width and y-> height
+            retval[int(e[2]),int(e[1]),int(s[3])] += 1
+        return retval
 
-	# Because producing events from the first image takes much
-	# longer than subsequent images, we don't publish events
-	# until we've done the first image, so people won't be getting
-	# empty event messages that don't mean anything.
-	# (unless we want to add some random noise or something?)
-        if not (self.events is None):
-            # Events are an N x 4 matrix of (time, x, y, polarity)
+    def to_event_array(self, events):
 
-            msg = EventArray()
-            msg.header.stamp = timer_event.current_real
-            msg.height = self.image.shape[0]
-            msg.width = self.image.shape[1]
-            msg.events = [Event(ts=rospy.Time.from_sec(x[0]), x=x[1].astype('uint16'), y=x[2].astype('uint16'), polarity=x[3].astype('bool')) for x in self.events]
-
-            self.pub.publish(msg)
-
-            # Remove the just processed events.
-            ## HACK: Make sure this isn't stupid (re: concurrency) later.
-            self.events = None
-
-
+        msg = EventArray()
+        msg.header.stamp = timer_event.current_real
+        msg.height = self.image.shape[0]
+        msg.width = self.image.shape[1]
+        msg.events = [Event(ts=rospy.Time.from_sec(x[0]),
+                            x=x[1].astype('uint16'),
+                            y=x[2].astype('uint16'),
+                            polarity=x[3].astype('bool')) for x in self.events]
+        return msg
 
 
 if __name__ == "__main__":
