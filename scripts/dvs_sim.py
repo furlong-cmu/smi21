@@ -20,11 +20,26 @@ from v2ecore.emulator import EventEmulator
 
 from external_module_interface.external_module import ExternalModule
 
+import sys
+
+def _functionId(num_frames_up):
+    co = sys._getframe(num_frames_up+1).f_code
+    return f'{co.co_name} ({co.co_filename}, {co.co_firstlineno})'
+
+def works_here():
+    out_file =  open('/home/bbpnrsoa/.opt/nrpStorage/Telluride-SMI21_0/log.out', 'a')
+    out_file.write(f'It works {_functionId(1)}\n')
+    out_file.close()
+
 
 class DVSSim(ExternalModule):
     
     def __init__(self, module_name=None, steps=1, module_id=123):
         super(DVSSim, self).__init__(module_name, steps)
+
+        works_here()
+
+        rospy.loginfo("DVS Sim initiating")
 
         self.module_id = module_id
 
@@ -39,8 +54,9 @@ class DVSSim(ExternalModule):
                    cutoff_hz=200, #rospy.get_param('cutoff_hz'),
                    leak_rate_hz=1,#rospy.get_param('leak_rate_hz'),
                    shot_noise_rate_hz=10,#rospy.get_param('shot_noise_rate_hz'),
-                   device=torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
-        ### end if self.events = None 
+                   device=torch.device('cuda' if torch.cuda.is_available() else 'cpu') )
+        ### end if 
+        self.events = None 
 
         self.sub = rospy.Subscriber('/husky/husky/camera',
                                     Image,
@@ -49,6 +65,9 @@ class DVSSim(ExternalModule):
             self.pub = rospy.Publisher('/smi21/dvs_event_array', EventArray, queue_size=1)
         self.image = None
         self.num_channels = {'rgb8':3}
+        works_here()
+
+    ### end __init__
 
 
     
@@ -75,25 +94,34 @@ class DVSSim(ExternalModule):
         '''
         note the length of the events should 
         '''
+        rospy.loginfo('Sharing module data')
         if not self.events is None:
             self.module_data = [self.module_id]
             self.module_data.extend(self.to_event_frame(self.events).flatten())
-            if self.publishing:
-                msg = self.to_event_array(self.events)
-                self.pub.publish(msg)
-            ### end if
             self.events = None
         ### end if
+        rospy.loginfo('Module data shared')
     ### end share_module_data
     
     # Callback functions
     def camera_callback(self, img_msg):
 
+        rospy.loginfo("Processing Camera Data")
         # TODO:Make sure colour conversion and reshaping works properly
         colour_img = np.frombuffer(img_msg.data, np.uint8).reshape((img_msg.height, img_msg.width, self.num_channels[img_msg.encoding]))
 
         self.image = cv2.cvtColor(colour_img, cv2.COLOR_RGB2GRAY)
         self.time = img_msg.header.stamp.to_sec()
+        rospy.loginfo("Camera Data Processed")
+
+        rospy.loginfo('Pubishing event array')
+        if self.publishing:
+            msg = self.to_event_array(self.events)
+            rospy.loginfo("Publishing event array")
+            self.pub.publish(msg)
+        ### end if
+        rospy.loginfo('Event array published')
+
 
     # Helper functions
     def to_event_frame(self, events):
@@ -110,13 +138,16 @@ class DVSSim(ExternalModule):
     def to_event_array(self, events):
 
         msg = EventArray()
-        msg.header.stamp = timer_event.current_real
+        msg.header.stamp = rospy.Time.now() 
         msg.height = self.image.shape[0]
         msg.width = self.image.shape[1]
-        msg.events = [Event(ts=rospy.Time.from_sec(x[0]),
-                            x=x[1].astype('uint16'),
-                            y=x[2].astype('uint16'),
-                            polarity=x[3].astype('bool')) for x in self.events]
+        if not events  is None:
+            msg.events = [Event(ts=rospy.Time.from_sec(x[0]),
+                                x=x[1].astype('uint16'),
+                                y=x[2].astype('uint16'),
+                                polarity=x[3].astype('bool')) for x in self.events]
+        else:
+            msg.events = []
         return msg
 
 
