@@ -13,6 +13,8 @@ from sensor_msgs.msg import Image
 
 from v2ecore.emulator import EventEmulator
 
+import util
+
 class StandaloneDVS:
     
     def __init__(self, module_name=None):
@@ -22,6 +24,7 @@ class StandaloneDVS:
         self.real_generator = False
         self.emulator = None
         if self.real_generator:
+            rospy.loginfo('Creating Event Emulator')
             self.emulator = EventEmulator(
                    pos_thres=0.2,
                    neg_thres=0.2,
@@ -36,14 +39,16 @@ class StandaloneDVS:
         self.sub = rospy.Subscriber('/husky/husky/camera',
                                     Image,
                                     self.camera_callback)
-        self.pub = rospy.Publisher('/smi21/dvs_event_array', EventArray, queue_size=1)
-        rospy.Timer(rospy.Duration(0.1), self.send_event)
+#        self.pub = rospy.Publisher('/smi21/dvs_event_array', EventArray, queue_size=1)
+        self.pub = rospy.Publisher('/smi21/event_image', Image, queue_size=1)
+#        rospy.Timer(rospy.Duration(0.1), self.send_event)
         self.image = None
         self.num_channels = {'rgb8':3}
 	
     def camera_callback(self, img_msg):
 
         # TODO:Make sure colour conversion and reshaping works properly
+        #rospy.loginfo('Image message received')
         colour_img = np.frombuffer(img_msg.data, np.uint8).reshape((img_msg.height, img_msg.width, self.num_channels[img_msg.encoding]))
 
         self.image = cv2.cvtColor(colour_img, cv2.COLOR_RGB2GRAY)
@@ -58,6 +63,23 @@ class StandaloneDVS:
             ys = np.random.randint(low=0,high=self.image.shape[0], size=(num_events,1)).astype('uint16')
             ps = (np.random.random((num_events,1)) > 0.5).astype('bool')
             self.events = np.hstack((ts,xs,ys,ps))
+        ### end if
+        event_frame = util.to_event_frame(self.events, self.image.shape)
+        zero_channel = np.zeros((event_frame.shape[0], event_frame.shape[1], 1),
+                                dtype=np.uint8)
+
+        output = np.concatenate((event_frame, zero_channel), axis=-1).astype(np.uint8)
+        msg = Image(height=img_msg.height,
+                    width=img_msg.width,
+                    encoding=img_msg.encoding,
+                    data = output.flatten().tolist())
+        msg.header.stamp = rospy.Time.now()
+        self.pub.publish(msg)
+        #rospy.loginfo('Event Image published')
+
+
+
+
 
 
     def send_event(self, timer_event):
